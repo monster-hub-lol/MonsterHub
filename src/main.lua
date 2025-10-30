@@ -13,6 +13,7 @@ if not success or not Fluent then
         Duration = 7
     })
 end
+print("Fluent loaded successfully")
 
 -- Cấu hình Window
 local Window = Fluent:CreateWindow({
@@ -24,6 +25,7 @@ local Window = Fluent:CreateWindow({
     Theme = "Dark",
     MinimizeKey = Enum.KeyCode.K
 })
+print("Window created")
 
 -- Simple notification helper
 local function Notify(title, msg)
@@ -53,11 +55,11 @@ local function AddScriptButton(tab, title, description, url, pre_execute_func)
     })
 end
 
-
 -- =================================================================
 -- ========== [ 1. INFORMATION ] (Đã đổi tên biến từ tabBF -> tabInfo)
 -- =================================================================
 local tabInfo = Window:AddTab({ Title = "Information", Icon = "rbxassetid://6031075938" })
+print("Tab Information added")
 
 tabInfo:AddButton({
     Title = "Admin : Monster",
@@ -77,6 +79,7 @@ tabInfo:AddParagraph({
 -- ========== [ 1.5. PLAYER ]
 -- =================================================================
 local tabPlayer = Window:AddTab({ Title = "Player", Icon = "rbxassetid://6031075938" })
+print("Tab Player added")
 
 -- Hiển thị thông tin người chơi
 local player = game.Players.LocalPlayer
@@ -109,18 +112,116 @@ local jumpSlider = tabPlayer:AddSlider("JumpPower", {
     end
 })
 
+-- Fly Toggle and Speed
+local flyEnabled = false
+local flySpeed = 50  -- Default fly speed
+local bodyVelocity
+
+local function enableFly()
+    if flyEnabled then return end
+    flyEnabled = true
+    local character = player.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+    local humanoid = character:FindFirstChild("Humanoid")
+    if not humanoid then return end
+
+    humanoid.PlatformStand = true
+    bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+    bodyVelocity.MaxForce = Vector3.new(4000, 4000, 4000)
+    bodyVelocity.Parent = character.HumanoidRootPart
+
+    -- Simple fly control (WASD to move)
+    local RunService = game:GetService("RunService")
+    RunService.RenderStepped:Connect(function()
+        if not flyEnabled or not bodyVelocity or not bodyVelocity.Parent then return end
+        local moveDirection = Vector3.new(0, 0, 0)
+        if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.W) then
+            moveDirection = moveDirection + workspace.CurrentCamera.CFrame.LookVector
+        end
+        if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.S) then
+            moveDirection = moveDirection - workspace.CurrentCamera.CFrame.LookVector
+        end
+        if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.A) then
+            moveDirection = moveDirection - workspace.CurrentCamera.CFrame.RightVector
+        end
+        if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.D) then
+            moveDirection = moveDirection + workspace.CurrentCamera.CFrame.RightVector
+        end
+        if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.Space) then
+            moveDirection = moveDirection + Vector3.new(0, 1, 0)
+        end
+        if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.LeftControl) then
+            moveDirection = moveDirection - Vector3.new(0, 1, 0)
+        end
+        bodyVelocity.Velocity = moveDirection * flySpeed
+    end)
+
+    Notify("Player", "Fly enabled. Use WASD + Space/Ctrl to move.")
+end
+
+local function disableFly()
+    if not flyEnabled then return end
+    flyEnabled = false
+    local character = player.Character
+    if character and character:FindFirstChild("Humanoid") then
+        character.Humanoid.PlatformStand = false
+    end
+    if bodyVelocity then
+        bodyVelocity:Destroy()
+        bodyVelocity = nil
+    end
+    Notify("Player", "Fly disabled.")
+end
+
+tabPlayer:AddToggle("Fly", {
+    Title = "Fly",
+    Default = false,
+    Callback = function(state)
+        if state then
+            enableFly()
+        else
+            disableFly()
+        end
+    end
+})
+
+local flySpeedSlider = tabPlayer:AddSlider("FlySpeed", {
+    Title = "Fly Speed",
+    Default = 50,
+    Min = 10,
+    Max = 200,
+    Rounding = 0,
+    Callback = function(value)
+        flySpeed = value
+        if flyEnabled and bodyVelocity then
+            -- Update speed in real-time if flying
+            local currentVelocity = bodyVelocity.Velocity
+            if currentVelocity.Magnitude > 0 then
+                bodyVelocity.Velocity = currentVelocity.Unit * flySpeed
+            end
+        end
+    end
+})
+
 -- =================================================================
--- Anti Kick / Ban (fixed hook + "callback error" notify on enable)
+-- Anti Kick / Ban (wrapped in pcall to prevent script stop if getrawmetatable fails)
 -- =================================================================
 local AntiKickEnabled = false
 local originalNamecall
-local mt = getrawmetatable(game)
-local setreadonly = setreadonly or function() end
-local newcclosure = newcclosure or function(f) return f end
 
 local function enableAntiKick()
     if AntiKickEnabled then return end
     AntiKickEnabled = true
+
+    -- Check if required functions exist
+    if not getrawmetatable or not setreadonly or not newcclosure or not hookmetamethod or not getnamecallmethod then
+        print("Anti Kick: Required functions not supported by executor.")
+        Notify("Player", "Anti Kick not supported by your executor.")
+        return
+    end
+
+    local mt = getrawmetatable(game)
 
     -- Try safe metamethod hook (works in most executors)
     local ok, err = pcall(function()
@@ -161,11 +262,12 @@ local function disableAntiKick()
 
     -- try restore
     pcall(function()
-        setreadonly(mt, false)
-        if originalNamecall then
+        if getrawmetatable and setreadonly and originalNamecall then
+            local mt = getrawmetatable(game)
+            setreadonly(mt, false)
             mt.__namecall = originalNamecall
+            setreadonly(mt, true)
         end
-        setreadonly(mt, true)
     end)
 
     -- if hookmetamethod fallback used, we can't easily undo, but it's fine
@@ -183,6 +285,7 @@ tabPlayer:AddToggle("AntiKick", {
         end
     end
 })
+print("Anti Kick toggle added")
 
 -- =================================================================
 -- FPS Boost Toggle (more aggressive)
@@ -284,6 +387,7 @@ tabPlayer:AddToggle("FPSBoost", {
         end
     end
 })
+print("FPS Boost toggle added")
 
 -- =================================================================
 -- Show FPS (rainbow, no shadow, smaller + bolder font)
@@ -329,11 +433,13 @@ tabPlayer:AddToggle("ShowFPS", {
         end
     end
 })
+print("Show FPS toggle added")
 
 -- =================================================================
 -- ========== [ 2. BLOX FRUITS ] (Đã đổi tên biến từ tabBF -> tabBloxFruits)
 -- =================================================================
 local tabBloxFruits = Window:AddTab({ Title = "Blox Fruits", Icon = "rbxassetid://6031075938" })
+print("Tab Blox Fruits added")
 
 -- Redz Hub
 AddScriptButton(
@@ -382,7 +488,6 @@ AddScriptButton(
     "Run W-azure Hub True V2 Script",
     "https://raw.githubusercontent.com/Overgustx2/Main/refs/heads/main/BloxFruits_25.html"
 )
-
 
 -- =================================================================
 -- ========== [ 3. TSB ]
