@@ -73,6 +73,167 @@ tabInfo:AddParagraph({
     Content = "Monster Hub is a multi-game Roblox script hub.\nSupported Games:\n• Blox Fruits\n• TSB\n• Rivals (Soon) \n• Fix Lag\n\nDiscord: discord.gg/ubJ6FP6t2n\nYouTube: TMonster"
 })
 
+-- =================================================================
+-- ========== [ 1.5. PLAYER ]
+-- =================================================================
+local tabPlayer = Window:AddTab({ Title = "Player", Icon = "rbxassetid://6031075938" })
+
+-- Hiển thị thông tin người chơi
+local player = game.Players.LocalPlayer
+tabPlayer:AddParagraph({
+    Title = "Player Info",
+    Content = "Name: " .. player.DisplayName .. "\n@" .. player.Name
+})
+
+-- Walk Speed
+local walkSpeedSlider = tabPlayer:AddSlider("WalkSpeed", {
+    Title = "Walk Speed",
+    Default = 16,
+    Min = 10,
+    Max = 100,
+    Rounding = 0,
+    Callback = function(value)
+        player.Character.Humanoid.WalkSpeed = value
+    end
+})
+
+-- Jump Power
+local jumpSlider = tabPlayer:AddSlider("JumpPower", {
+    Title = "Jump Power",
+    Default = 50,
+    Min = 20,
+    Max = 200,
+    Rounding = 0,
+    Callback = function(value)
+        player.Character.Humanoid.JumpPower = value
+    end
+})
+
+-- Anti Kick / Ban
+tabPlayer:AddToggle("AntiKick", {
+    Title = "Anti Kick / Ban",
+    Default = false,
+    Callback = function(state)
+        if state then
+            hookmetamethod(game, "__namecall", function(self, ...)
+                local method = getnamecallmethod()
+                if method == "Kick" or method == "kick" then
+                    return
+                end
+                return old(self, ...)
+            end)
+            Notify("Player", "Anti Kick enabled!")
+        else
+            Notify("Player", "Anti Kick disabled!")
+        end
+    end
+})
+
+-- Anti AFK
+tabPlayer:AddToggle("AntiAFK", {
+    Title = "Anti AFK",
+    Default = false,
+    Callback = function(state)
+        if state then
+            local vu = game:GetService("VirtualUser")
+            game.Players.LocalPlayer.Idled:Connect(function()
+                vu:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                task.wait(1)
+                vu:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+            end)
+            Notify("Player", "Anti AFK enabled!")
+        else
+            Notify("Player", "Anti AFK disabled!")
+        end
+    end
+})
+
+-- FPS Boost Toggle
+tabPlayer:AddToggle("FPSBoost", {
+    Title = "FPS Boost (Reduce Lag)",
+    Default = false,
+    Callback = function(state)
+        if state then
+            -- Giảm đồ họa để tăng FPS
+            settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+            setfpscap(240)
+            for _,v in pairs(workspace:GetDescendants()) do
+                if v:IsA("BasePart") then
+                    v.Material = Enum.Material.SmoothPlastic
+                    v.Reflectance = 0
+                elseif v:IsA("Decal") or v:IsA("Texture") then
+                    v.Transparency = 1
+                elseif v:IsA("ParticleEmitter") or v:IsA("Trail") then
+                    v.Enabled = false
+                end
+            end
+            Notify("Player", "FPS Boost enabled.")
+        else
+            settings().Rendering.QualityLevel = Enum.QualityLevel.Automatic
+            Notify("Player", "FPS Boost disabled.")
+        end
+    end
+})
+
+-- Show FPS (rainbow text with glow + top-right corner)
+local RunService = game:GetService("RunService")
+local camera = workspace.CurrentCamera
+
+-- Tạo text FPS
+local fpsLabel = Drawing.new("Text")
+fpsLabel.Size = 32
+fpsLabel.Outline = true
+fpsLabel.Center = false
+fpsLabel.Position = Vector2.new(camera.ViewportSize.X - 150, 40)
+fpsLabel.Visible = false
+fpsLabel.Font = 3 -- UI font đẹp, đậm
+fpsLabel.Text = "FPS: 0"
+
+-- Tạo hiệu ứng glow trắng (bằng cách thêm shadow)
+local fpsShadow = Drawing.new("Text")
+fpsShadow.Size = fpsLabel.Size
+fpsShadow.Color = Color3.fromRGB(255,255,255)
+fpsShadow.Outline = false
+fpsShadow.Center = false
+fpsShadow.Position = fpsLabel.Position + Vector2.new(2,2)
+fpsShadow.Transparency = 0.3
+fpsShadow.Visible = false
+fpsShadow.Font = fpsLabel.Font
+
+-- Cập nhật vị trí khi đổi kích thước màn hình
+camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+    fpsLabel.Position = Vector2.new(camera.ViewportSize.X - 150, 40)
+    fpsShadow.Position = fpsLabel.Position + Vector2.new(2,2)
+end)
+
+-- Hiệu ứng cầu vồng
+local hue = 0
+RunService.RenderStepped:Connect(function(dt)
+    if fpsLabel.Visible then
+        local fps = math.floor(1 / dt)
+        hue = (hue + dt * 0.3) % 1
+        local color = Color3.fromHSV(hue, 1, 1)
+        fpsLabel.Color = color
+        fpsLabel.Text = "FPS: " .. fps
+        fpsShadow.Text = fpsLabel.Text
+    end
+end)
+
+-- Toggle FPS hiển thị
+tabPlayer:AddToggle("ShowFPS", {
+    Title = "Show FPS (Rainbow)",
+    Default = false,
+    Callback = function(state)
+        fpsLabel.Visible = state
+        fpsShadow.Visible = state
+        if state then
+            Notify("Player", "Rainbow FPS display enabled (top-right corner)!")
+        else
+            Notify("Player", "Rainbow FPS display disabled!")
+        end
+    end
+})
+
 
 -- =================================================================
 -- ========== [ 2. BLOX FRUITS ] (Đã đổi tên biến từ tabBF -> tabBloxFruits)
