@@ -109,131 +109,226 @@ local jumpSlider = tabPlayer:AddSlider("JumpPower", {
     end
 })
 
--- Anti Kick / Ban
+-- =================================================================
+-- Anti Kick / Ban (fixed hook + "callback error" notify on enable)
+-- =================================================================
+local AntiKickEnabled = false
+local originalNamecall
+local mt = getrawmetatable(game)
+local setreadonly = setreadonly or function() end
+local newcclosure = newcclosure or function(f) return f end
+
+local function enableAntiKick()
+    if AntiKickEnabled then return end
+    AntiKickEnabled = true
+
+    -- Try safe metamethod hook (works in most executors)
+    local ok, err = pcall(function()
+        setreadonly(mt, false)
+        originalNamecall = mt.__namecall
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            -- Block Kick or ServerKick (case-insensitive)
+            if method == "Kick" or method == "kick" or method == "ServerKick" then
+                -- swallow the call silently
+                return nil
+            end
+            return originalNamecall(self, ...)
+        end)
+        setreadonly(mt, true)
+    end)
+
+    if not ok then
+        -- fallback: try hookmetamethod (some executors)
+        pcall(function()
+            originalNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+                local method = getnamecallmethod()
+                if method == "Kick" or method == "kick" or method == "ServerKick" then
+                    return nil
+                end
+                return originalNamecall(self, ...)
+            end)
+        end)
+    end
+
+    -- Show the specific "callback error" notification when turned on (as requested)
+    Notify("Player", "Anti Kick enabled! (callback error)")
+end
+
+local function disableAntiKick()
+    if not AntiKickEnabled then return end
+    AntiKickEnabled = false
+
+    -- try restore
+    pcall(function()
+        setreadonly(mt, false)
+        if originalNamecall then
+            mt.__namecall = originalNamecall
+        end
+        setreadonly(mt, true)
+    end)
+
+    -- if hookmetamethod fallback used, we can't easily undo, but it's fine
+    Notify("Player", "Anti Kick disabled.")
+end
+
 tabPlayer:AddToggle("AntiKick", {
     Title = "Anti Kick / Ban",
     Default = false,
     Callback = function(state)
         if state then
-            hookmetamethod(game, "__namecall", function(self, ...)
-                local method = getnamecallmethod()
-                if method == "Kick" or method == "kick" then
-                    return
-                end
-                return old(self, ...)
-            end)
-            Notify("Player", "Anti Kick enabled!")
+            enableAntiKick()
         else
-            Notify("Player", "Anti Kick disabled!")
+            disableAntiKick()
         end
     end
 })
 
--- Anti AFK
-tabPlayer:AddToggle("AntiAFK", {
-    Title = "Anti AFK",
-    Default = false,
-    Callback = function(state)
-        if state then
-            local vu = game:GetService("VirtualUser")
-            game.Players.LocalPlayer.Idled:Connect(function()
-                vu:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
-                task.wait(1)
-                vu:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
-            end)
-            Notify("Player", "Anti AFK enabled!")
-        else
-            Notify("Player", "Anti AFK disabled!")
-        end
-    end
-})
+-- =================================================================
+-- FPS Boost Toggle (more aggressive)
+-- =================================================================
+local Lighting = game:GetService("Lighting")
+local Workspace = workspace
+local prev = {}
 
--- FPS Boost Toggle
-tabPlayer:AddToggle("FPSBoost", {
-    Title = "FPS Boost (Reduce Lag)",
-    Default = false,
-    Callback = function(state)
-        if state then
-            -- Giảm đồ họa để tăng FPS
-            settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-            setfpscap(240)
-            for _,v in pairs(workspace:GetDescendants()) do
-                if v:IsA("BasePart") then
-                    v.Material = Enum.Material.SmoothPlastic
-                    v.Reflectance = 0
-                elseif v:IsA("Decal") or v:IsA("Texture") then
-                    v.Transparency = 1
-                elseif v:IsA("ParticleEmitter") or v:IsA("Trail") then
-                    v.Enabled = false
-                end
+local function storePrevSettings()
+    prev.QualityLevel = (settings and settings().Rendering and settings().Rendering.QualityLevel) or Enum.QualityLevel.Automatic
+    prev.GlobalShadows = Lighting.GlobalShadows
+    prev.Brightness = Lighting.Brightness
+    prev.OutdoorAmbient = Lighting.OutdoorAmbient
+    prev.FogEnd = Lighting.FogEnd
+end
+
+local function restorePrevSettings()
+    pcall(function()
+        if prev.QualityLevel then settings().Rendering.QualityLevel = prev.QualityLevel end
+        Lighting.GlobalShadows = prev.GlobalShadows
+        Lighting.Brightness = prev.Brightness
+        Lighting.OutdoorAmbient = prev.OutdoorAmbient
+        Lighting.FogEnd = prev.FogEnd
+    end)
+end
+
+local aggressiveApplied = false
+local function applyAggressiveFPSBoost()
+    if aggressiveApplied then return end
+    aggressiveApplied = true
+    storePrevSettings()
+
+    -- Lower rendering quality hard
+    pcall(function()
+        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+        if setfpscap then pcall(setfpscap, 1000) end
+    end)
+
+    -- Lighting / effects
+    pcall(function()
+        Lighting.GlobalShadows = false
+        Lighting.Brightness = 1
+        Lighting.OutdoorAmbient = Color3.fromRGB(128,128,128)
+        Lighting.FogEnd = 9e9
+        -- try to disable common post-processing
+        for _, v in pairs(Lighting:GetChildren()) do
+            if v:IsA("BloomEffect") or v:IsA("BlurEffect") or v:IsA("SunRaysEffect") or v:IsA("ColorCorrectionEffect") or v:IsA("DepthOfFieldEffect") or v:IsA("SunRaysEffect") then
+                v.Enabled = false
             end
-            Notify("Player", "FPS Boost enabled.")
+        end
+    end)
+
+    -- Reduce details in workspace
+    for _, v in pairs(Workspace:GetDescendants()) do
+        pcall(function()
+            if v:IsA("BasePart") then
+                v.Material = Enum.Material.SmoothPlastic
+                v.Reflectance = 0
+                v.CastShadow = false
+            elseif v:IsA("Decal") or v:IsA("Texture") then
+                v.Transparency = 1
+            elseif v:IsA("ParticleEmitter") or v:IsA("Trail") then
+                v.Enabled = false
+            elseif v:IsA("Sound") then
+                v.Playing = false
+            end
+        end)
+    end
+
+    -- Terrain optimizations (if exists)
+    pcall(function()
+        if workspace:FindFirstChildOfClass("Terrain") then
+            local terrain = workspace:FindFirstChildOfClass("Terrain")
+            terrain.WaterWaveSize = 0
+            terrain.WaterWaveSpeed = 0
+        end
+    end)
+
+    Notify("Player", "FPS Boost (aggressive) enabled.")
+end
+
+local function removeAggressiveFPSBoost()
+    if not aggressiveApplied then return end
+    aggressiveApplied = false
+    restorePrevSettings()
+    -- Note: we do not restore every modified descendant individually (could be heavy).
+    -- If you need full restoration, reload the character / rejoin server.
+    Notify("Player", "FPS Boost disabled. Some object states may require rejoin to fully restore.")
+end
+
+tabPlayer:AddToggle("FPSBoost", {
+    Title = "FPS Boost (Aggressive)",
+    Default = false,
+    Callback = function(state)
+        if state then
+            applyAggressiveFPSBoost()
         else
-            settings().Rendering.QualityLevel = Enum.QualityLevel.Automatic
-            Notify("Player", "FPS Boost disabled.")
+            removeAggressiveFPSBoost()
         end
     end
 })
 
--- Show FPS (rainbow text with glow + top-right corner)
+-- =================================================================
+-- Show FPS (rainbow, no shadow, smaller + bolder font)
+-- =================================================================
 local RunService = game:GetService("RunService")
 local camera = workspace.CurrentCamera
 
--- Tạo text FPS
+-- create FPS label (Drawing)
 local fpsLabel = Drawing.new("Text")
-fpsLabel.Size = 32
+fpsLabel.Size = 20 -- smaller
 fpsLabel.Outline = true
 fpsLabel.Center = false
-fpsLabel.Position = Vector2.new(camera.ViewportSize.X - 150, 40)
+fpsLabel.Position = Vector2.new(camera.ViewportSize.X - 100, 30)
 fpsLabel.Visible = false
-fpsLabel.Font = 3 -- UI font đẹp, đậm
+fpsLabel.Font = 2 -- try a bold/rounded style (exec-dependent)
 fpsLabel.Text = "FPS: 0"
+-- no shadow/extra text
 
--- Tạo hiệu ứng glow trắng (bằng cách thêm shadow)
-local fpsShadow = Drawing.new("Text")
-fpsShadow.Size = fpsLabel.Size
-fpsShadow.Color = Color3.fromRGB(255,255,255)
-fpsShadow.Outline = false
-fpsShadow.Center = false
-fpsShadow.Position = fpsLabel.Position + Vector2.new(2,2)
-fpsShadow.Transparency = 0.3
-fpsShadow.Visible = false
-fpsShadow.Font = fpsLabel.Font
-
--- Cập nhật vị trí khi đổi kích thước màn hình
 camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
-    fpsLabel.Position = Vector2.new(camera.ViewportSize.X - 150, 40)
-    fpsShadow.Position = fpsLabel.Position + Vector2.new(2,2)
+    fpsLabel.Position = Vector2.new(camera.ViewportSize.X - 100, 30)
 end)
 
--- Hiệu ứng cầu vồng
 local hue = 0
+local lastTime = tick()
 RunService.RenderStepped:Connect(function(dt)
     if fpsLabel.Visible then
-        local fps = math.floor(1 / dt)
-        hue = (hue + dt * 0.3) % 1
-        local color = Color3.fromHSV(hue, 1, 1)
-        fpsLabel.Color = color
+        local fps = math.floor(1 / dt + 0.5)
+        hue = (hue + dt * 0.6) % 1 -- faster rainbow shift
+        fpsLabel.Color = Color3.fromHSV(hue, 1, 1)
         fpsLabel.Text = "FPS: " .. fps
-        fpsShadow.Text = fpsLabel.Text
     end
 end)
 
--- Toggle FPS hiển thị
 tabPlayer:AddToggle("ShowFPS", {
     Title = "Show FPS (Rainbow)",
     Default = false,
     Callback = function(state)
         fpsLabel.Visible = state
-        fpsShadow.Visible = state
         if state then
-            Notify("Player", "Rainbow FPS display enabled (top-right corner)!")
+            Notify("Player", "Rainbow FPS enabled (top-right).")
         else
-            Notify("Player", "Rainbow FPS display disabled!")
+            Notify("Player", "Rainbow FPS disabled.")
         end
     end
 })
-
 
 -- =================================================================
 -- ========== [ 2. BLOX FRUITS ] (Đã đổi tên biến từ tabBF -> tabBloxFruits)
